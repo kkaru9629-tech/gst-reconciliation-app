@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import io
@@ -14,27 +13,41 @@ st.markdown("Upload Purchase Register (Tally) and GSTR-2B Excel files.")
 col1, col2 = st.columns(2)
 
 with col1:
-    tally_file = st.file_uploader("Upload Tally Purchase Register", type=["xlsx", "xls", "csv"])
+    tally_file = st.file_uploader(
+        "Upload Tally Purchase Register",
+        type=["xlsx", "xls", "csv"]
+    )
 
 with col2:
-    gstr2b_file = st.file_uploader("Upload GSTR-2B", type=["xlsx", "xls", "csv"])
+    gstr2b_file = st.file_uploader(
+        "Upload GSTR-2B",
+        type=["xlsx", "xls", "csv"]
+    )
 
 
 # ---------------- RUN RECONCILIATION ---------------- #
 
 if st.button("Run Reconciliation", type="primary", use_container_width=True):
 
-    if not tally_file or not gstr2b_file:
+    # ✅ SAFE CHECK
+    if tally_file is None or gstr2b_file is None:
         st.error("Please upload both files.")
     else:
         try:
-            with st.spinner("Processing..."):
+            with st.spinner("Processing files..."):
 
-                # Read files
-                tally_raw = pd.read_csv(tally_file) if tally_file.name.endswith("csv") else pd.read_excel(tally_file)
-                gstr2b_raw = pd.read_csv(gstr2b_file) if gstr2b_file.name.endswith("csv") else pd.read_excel(gstr2b_file)
+                # ✅ SAFE FILE READ
+                if tally_file.name.lower().endswith(".csv"):
+                    tally_raw = pd.read_csv(tally_file)
+                else:
+                    tally_raw = pd.read_excel(tally_file)
 
-                # Parse
+                if gstr2b_file.name.lower().endswith(".csv"):
+                    gstr2b_raw = pd.read_csv(gstr2b_file)
+                else:
+                    gstr2b_raw = pd.read_excel(gstr2b_file)
+
+                # Parse data
                 tally_clean = parse_tally(tally_raw)
                 gstr2b_clean = parse_gstr2b(gstr2b_raw)
 
@@ -42,10 +55,11 @@ if st.button("Run Reconciliation", type="primary", use_container_width=True):
                 results = reconcile(gstr2b_clean, tally_clean)
 
                 st.session_state["results"] = results
+
                 st.success("Reconciliation Completed Successfully.")
 
         except Exception as e:
-            st.error(f"Error: {str(e)}")
+            st.error(f"Error occurred: {str(e)}")
 
 
 # ---------------- DISPLAY RESULTS ---------------- #
@@ -82,35 +96,80 @@ if "results" in st.session_state:
         "Tax Mismatch"
     ])
 
+    # ✅ SAFELY DISPLAY DATAFRAMES
+
     with tab1:
-        st.dataframe(results["fully_matched"], use_container_width=True)
+        if not results["fully_matched"].empty:
+            st.dataframe(results["fully_matched"], use_container_width=True)
+        else:
+            st.info("No fully matched invoices.")
 
     with tab2:
-        st.dataframe(results["missing_in_books"], use_container_width=True)
+        if not results["missing_in_books"].empty:
+            st.dataframe(results["missing_in_books"], use_container_width=True)
+        else:
+            st.info("No invoices missing in books.")
 
     with tab3:
-        st.dataframe(results["missing_in_2b"], use_container_width=True)
+        if not results["missing_in_2b"].empty:
+            st.dataframe(results["missing_in_2b"], use_container_width=True)
+        else:
+            st.info("No invoices missing in 2B.")
 
     with tab4:
-        st.dataframe(results["value_mismatch"], use_container_width=True)
+        if not results["value_mismatch"].empty:
+            st.dataframe(results["value_mismatch"], use_container_width=True)
+        else:
+            st.info("No value mismatches.")
 
     with tab5:
-        st.dataframe(results["tax_mismatch"], use_container_width=True)
+        if not results["tax_mismatch"].empty:
+            st.dataframe(results["tax_mismatch"], use_container_width=True)
+        else:
+            st.info("No tax mismatches.")
 
     st.markdown("---")
 
     # ---------------- DOWNLOAD REPORT ---------------- #
 
     output = io.BytesIO()
+
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
 
-        pd.DataFrame([results["summary"]]).T.to_excel(writer, sheet_name="Summary")
+        pd.DataFrame([results["summary"]]).T.to_excel(
+            writer,
+            sheet_name="Summary"
+        )
 
-        results["fully_matched"].to_excel(writer, sheet_name="Fully Matched", index=False)
-        results["missing_in_books"].to_excel(writer, sheet_name="Missing in Books", index=False)
-        results["missing_in_2b"].to_excel(writer, sheet_name="Missing in 2B", index=False)
-        results["value_mismatch"].to_excel(writer, sheet_name="Value Mismatch", index=False)
-        results["tax_mismatch"].to_excel(writer, sheet_name="Tax Mismatch", index=False)
+        results["fully_matched"].to_excel(
+            writer,
+            sheet_name="Fully Matched",
+            index=False
+        )
+
+        results["missing_in_books"].to_excel(
+            writer,
+            sheet_name="Missing in Books",
+            index=False
+        )
+
+        results["missing_in_2b"].to_excel(
+            writer,
+            sheet_name="Missing in 2B",
+            index=False
+        )
+
+        results["value_mismatch"].to_excel(
+            writer,
+            sheet_name="Value Mismatch",
+            index=False
+        )
+
+        results["tax_mismatch"].to_excel(
+            writer,
+            sheet_name="Tax Mismatch",
+            index=False
+        )
 
     output.seek(0)
 
