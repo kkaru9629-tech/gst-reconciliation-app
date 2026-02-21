@@ -103,9 +103,9 @@ def parse_gstr2b(df):
 
     df = df.copy()
 
-    # Auto-detect header row containing GSTIN
+    # 🔍 Find first header row containing GSTIN
     header_idx = None
-    for i in range(min(len(df), 25)):
+    for i in range(min(len(df), 30)):
         row = [str(x).lower() for x in df.iloc[i].values]
         if any("gstin" in x for x in row):
             header_idx = i
@@ -114,14 +114,22 @@ def parse_gstr2b(df):
     if header_idx is None:
         raise ValueError("GSTR-2B header not detected")
 
-    # Rebuild dataframe from header row
-    df.columns = df.iloc[header_idx]
-    df = df.iloc[header_idx + 1:].reset_index(drop=True)
+    # Combine TWO header rows
+    header_row1 = df.iloc[header_idx].fillna("")
+    header_row2 = df.iloc[header_idx + 1].fillna("")
 
-    df.columns = [str(c).strip() for c in df.columns]
+    combined_headers = []
+    for h1, h2 in zip(header_row1, header_row2):
+        col_name = f"{h1} {h2}".strip()
+        combined_headers.append(col_name)
+
+    df.columns = combined_headers
+    df = df.iloc[header_idx + 2:].reset_index(drop=True)
+
     df = df.dropna(how='all')
+    df.columns = [str(c).strip() for c in df.columns]
 
-    # Rename dynamically
+    # 🔄 Rename dynamically
     column_mapping = {}
 
     for col in df.columns:
@@ -150,13 +158,13 @@ def parse_gstr2b(df):
 
     df.rename(columns=column_mapping, inplace=True)
 
-    # Validate required
+    # Validate required columns
     required = ["GSTIN", "Invoice_No", "Invoice_Date"]
     for col in required:
         if col not in df.columns:
             raise ValueError(f"{col} column not found in GSTR-2B")
 
-    # Clean
+    # Clean data
     df["GSTIN"] = df["GSTIN"].apply(clean_string)
     df["Invoice_No"] = df["Invoice_No"].apply(clean_invoice_number)
     df["Invoice_Date"] = pd.to_datetime(df["Invoice_Date"], errors="coerce", dayfirst=True)
@@ -184,7 +192,6 @@ def parse_gstr2b(df):
         "SGST",
         "TOTAL_TAX"
     ]].reset_index(drop=True)
-
 # -------------------- RECONCILIATION -------------------- #
 
 def reconcile(gstr2b_df, tally_df):
