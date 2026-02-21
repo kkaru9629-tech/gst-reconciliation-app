@@ -1,134 +1,167 @@
-import streamlit as st
 import pandas as pd
-import io
-from reconciliation_engine import parse_tally, parse_gstr2b, reconcile
+import re
 
-st.set_page_config(page_title="GST Reconciliation", layout="wide")
+# ---------------- CLEANING FUNCTIONS ---------------- #
 
-st.title("GST Reconciliation Application")
-st.markdown("Upload Purchase Register (Tally) and GSTR-2B Excel files to reconcile invoices.")
+def clean_string(val):
+    return "" if pd.isna(val) else str(val).strip().upper()
 
-# ---------------- FILE UPLOAD ---------------- #
+def clean_invoice_number(val):
+    return "" if pd.isna(val) else re.sub(r"[^A-Z0-9]", "", str(val).upper())
 
-col1, col2 = st.columns(2)
+def parse_numeric(val):
+    if pd.isna(val):
+        return 0.0
+    val = str(val).replace(",", "").replace("Dr", "").replace("Cr", "").strip()
+    try:
+        return float(val)
+    except:
+        return 0.0
 
-with col1:
-    st.subheader("Purchase Register (Tally)")
-    tally_file = st.file_uploader("Upload Tally Excel/CSV", type=["xlsx", "xls", "csv"])
 
-with col2:
-    st.subheader("GSTR-2B")
-    gstr2b_file = st.file_uploader("Upload GSTR-2B Excel/CSV", type=["xlsx", "xls", "csv"])
+# ---------------- TALLY PARSER ---------------- #
 
-# ---------------- RUN RECONCILIATION ---------------- #
+def parse_tally(df):
 
-if st.button("Run Reconciliation", type="primary", use_container_width=True):
+    df = df.dropna(how="all")
+    df.columns = df.columns.astype(str)
 
-    if tally_file is None or gstr2b_file is None:
-        st.error("Please upload both files")
-    else:
-        try:
-            with st.spinner("Processing..."):
+    col_map = {}
 
-                tally_raw = pd.read_csv(tally_file) if tally_file.name.endswith(".csv") else pd.read_excel(tally_file)
-                gstr2b_raw = pd.read_csv(gstr2b_file) if gstr2b_file.name.endswith(".csv") else pd.read_excel(gstr2b_file)
+    for col in df.columns:
+        col_lower = col.lower()
 
-                tally_clean = parse_tally(tally_raw)
-                gstr2b_clean = parse_gstr2b(gstr2b_raw)
+        if "gstin" in col_lower:
+            col_map[col] = "GSTIN"
+        elif "invoice" in col_lower:
+            col_map[col] = "Invoice_No"
+        elif "date" in col_lower:
+            col_map[col] = "Invoice_Date"
+        elif "gross" in col_lower:
+            col_map[col] = "Invoice_Value"
+        elif "particular" in col_lower:
+            col_map[col] = "Trade_Name"
 
-                results = reconcile(gstr2b_clean, tally_clean)
+    df.rename(columns=col_map, inplace=True)
 
-                st.session_state.results = results
-                st.success("Reconciliation Completed Successfully!")
+    required = ["GSTIN", "Invoice_No", "Invoice_Date"]
+    for col in required:
+        if col not in df.columns:
+            raise ValueError(f"{col} column not found in Tally")
 
-        except Exception as e:
-            st.error(f"Error: {str(e)}")
+    df["GSTIN"] = df["GSTIN"].apply(clean_string)
+    df["Invoice_No"] = df["Invoice_No"].apply(clean_invoice_number)
+    df["Invoice_Date"] = pd.to_datetime(df["Invoice_Date"], errors="coerce", dayfirst=True)
 
-# ---------------- DISPLAY RESULTS ---------------- #
+    igst = [c for c in df.columns if "igst" in c.lower()]
+    cgst = [c for c in df.columns if "cgst" in c.lower()]
+    sgst = [c for c in df.columns if "sgst" in c.lower()]
 
-if "results" in st.session_state:
+    df["IGST"] = df[igst].sum(axis=1) if igst else 0
+    df["CGST"] = df[cgst].sum(axis=1) if cgst else 0
+    df["SGST"] = df[sgst].sum(axis=1) if sgst else 0
 
-    results = st.session_state.results
+    df["TOTAL_TAX"] = df["IGST"] + df["CGST"] + df["SGST"]
+    df["Taxable_Value"] = df.get("Invoice_Value", 0) - df["TOTAL_TAX"]
 
-    st.header("Summary")
+    return df[["GSTIN", "Trade_Name", "Invoice_No", "Invoice_Date", "Taxable_Value", "TOTAL_TAX"]]
 
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Books", results['summary']['Total_Invoices_Books'])
-    col2.metric("2B", results['summary']['Total_Invoices_2B'])
-    col3.metric("Matched", results['summary']['Total_Matched'])
-    col4.metric("Missing in Books", results['summary']['Total_Missing_Books'])
-    col5.metric("Missing in 2B", results['summary']['Total_Missing_2B'])
 
-    st.markdown("---")
+# ---------------- GSTR2B PARSER ---------------- #
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("ITC (Books)", f"₹{results['summary']['Total_ITC_Books']:,.2f}")
-    col2.metric("ITC (2B)", f"₹{results['summary']['Total_ITC_2B']:,.2f}")
-    col3.metric("ITC Difference", f"₹{results['summary']['ITC_Difference']:,.2f}")
+def parse_gstr2b(df):
 
-    st.markdown("---")
+    df = df.dropna(how="all")
 
-    tabs = st.tabs(["Matched", "Missing in Books", "Missing in 2B", "Value Mismatch", "Tax Mismatch"])
+    header_idx = None
+    for i in range(min(30, len(df))):
+        if df.iloc[i].astype(str).str.contains("GSTIN", case=False).any():
+            header_idx = i
+            break
 
-    for tab, key in zip(tabs, ["fully_matched", "missing_in_books", "missing_in_2b", "value_mismatch", "tax_mismatch"]):
-        with tab:
-            df = results[key]
-            if not df.empty:
-                st.dataframe(df, use_container_width=True)
-                st.write(f"Total: {len(df)} invoices")
-            else:
-                st.info("No data found.")
+    if header_idx is None:
+        raise ValueError("GSTR-2B header not detected")
 
-    # ---------------- DOWNLOAD ---------------- #
+    df.columns = df.iloc[header_idx]
+    df = df.iloc[header_idx + 1:].reset_index(drop=True)
 
-    st.header("Download Professional Report")
+    col_map = {}
 
-    output = io.BytesIO()
+    for col in df.columns:
+        col_lower = str(col).lower()
 
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        if "gstin" in col_lower:
+            col_map[col] = "GSTIN"
+        elif "trade" in col_lower:
+            col_map[col] = "Trade_Name"
+        elif "invoice number" in col_lower:
+            col_map[col] = "Invoice_No"
+        elif "invoice date" in col_lower:
+            col_map[col] = "Invoice_Date"
+        elif "taxable value" in col_lower:
+            col_map[col] = "Taxable_Value"
+        elif "integrated tax" in col_lower:
+            col_map[col] = "IGST"
+        elif "central tax" in col_lower:
+            col_map[col] = "CGST"
+        elif "state" in col_lower:
+            col_map[col] = "SGST"
 
-        workbook = writer.book
+    df.rename(columns=col_map, inplace=True)
 
-        header_format = workbook.add_format({
-            "bold": True,
-            "font_name": "Times New Roman",
-            "font_size": 11,
-            "border": 1
-        })
+    required = ["GSTIN", "Invoice_No", "Invoice_Date"]
+    for col in required:
+        if col not in df.columns:
+            raise ValueError(f"{col} column not found in 2B")
 
-        data_format = workbook.add_format({
-            "font_name": "Times New Roman",
-            "font_size": 11
-        })
+    df["GSTIN"] = df["GSTIN"].apply(clean_string)
+    df["Invoice_No"] = df["Invoice_No"].apply(clean_invoice_number)
+    df["Invoice_Date"] = pd.to_datetime(df["Invoice_Date"], errors="coerce", dayfirst=True)
 
-        def write_sheet(df, sheet_name):
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
-            worksheet = writer.sheets[sheet_name]
+    df["IGST"] = df.get("IGST", 0)
+    df["CGST"] = df.get("CGST", 0)
+    df["SGST"] = df.get("SGST", 0)
 
-            for col_num, value in enumerate(df.columns):
-                worksheet.write(0, col_num, value, header_format)
+    df["TOTAL_TAX"] = df["IGST"] + df["CGST"] + df["SGST"]
 
-            for i, col in enumerate(df.columns):
-                max_len = max(df[col].astype(str).map(len).max(), len(col)) + 2
-                worksheet.set_column(i, i, max_len, data_format)
+    return df[["GSTIN", "Trade_Name", "Invoice_No", "Invoice_Date", "Taxable_Value", "TOTAL_TAX"]]
 
-        write_sheet(pd.DataFrame([results["summary"]]).T.reset_index(), "Summary")
-        write_sheet(results["fully_matched"], "Matched")
-        write_sheet(results["missing_in_books"], "Missing in Books")
-        write_sheet(results["missing_in_2b"], "Missing in 2B")
 
-        if not results["value_mismatch"].empty:
-            write_sheet(results["value_mismatch"], "Value Mismatch")
+# ---------------- RECONCILIATION ---------------- #
 
-        if not results["tax_mismatch"].empty:
-            write_sheet(results["tax_mismatch"], "Tax Mismatch")
+def reconcile(gstr2b, tally):
 
-    output.seek(0)
+    gstr2b["Key"] = gstr2b["GSTIN"] + "|" + gstr2b["Invoice_No"]
+    tally["Key"] = tally["GSTIN"] + "|" + tally["Invoice_No"]
 
-    st.download_button(
-        label="Download Excel Report",
-        data=output,
-        file_name="GST_Reconciliation_Report.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
+    missing_books = gstr2b[~gstr2b["Key"].isin(tally["Key"])]
+    missing_2b = tally[~tally["Key"].isin(gstr2b["Key"])]
+
+    merged = pd.merge(gstr2b, tally, on="Key", suffixes=("_2B", "_Books"))
+
+    merged["Value_Diff"] = merged["Taxable_Value_2B"] - merged["Taxable_Value_Books"]
+    merged["Tax_Diff"] = merged["TOTAL_TAX_2B"] - merged["TOTAL_TAX_Books"]
+
+    fully_matched = merged[(merged["Value_Diff"].abs() <= 1) & (merged["Tax_Diff"].abs() <= 1)]
+    value_mismatch = merged[merged["Value_Diff"].abs() > 1]
+    tax_mismatch = merged[merged["Tax_Diff"].abs() > 1]
+
+    summary = {
+        "Total_Invoices_Books": len(tally),
+        "Total_Invoices_2B": len(gstr2b),
+        "Total_Matched": len(fully_matched),
+        "Total_Missing_Books": len(missing_books),
+        "Total_Missing_2B": len(missing_2b),
+        "Total_ITC_Books": tally["TOTAL_TAX"].sum(),
+        "Total_ITC_2B": gstr2b["TOTAL_TAX"].sum(),
+        "ITC_Difference": gstr2b["TOTAL_TAX"].sum() - tally["TOTAL_TAX"].sum()
+    }
+
+    return {
+        "fully_matched": fully_matched,
+        "missing_in_books": missing_books,
+        "missing_in_2b": missing_2b,
+        "value_mismatch": value_mismatch,
+        "tax_mismatch": tax_mismatch,
+        "summary": summary
+    }
