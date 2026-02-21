@@ -44,8 +44,6 @@ def parse_tally(df):
             column_mapping[col] = 'Invoice_No'
         elif col_lower == 'date':
             column_mapping[col] = 'Invoice_Date'
-        elif col_lower == 'value' and 'Taxable_Value' not in df.columns:
-            column_mapping[col] = 'Taxable_Value'
         elif col_lower in ['gross total', 'total']:
             column_mapping[col] = 'Invoice_Value'
     
@@ -94,7 +92,7 @@ def parse_tally(df):
         df['SGST'] = df[sgst_cols].apply(lambda row: sum(parse_numeric(v) for v in row), axis=1)
     
     df['TOTAL_TAX'] = df['IGST'] + df['CGST'] + df['SGST']
-    
+    df['Taxable_Value'] = df['Invoice_Value'] - df['TOTAL_TAX']    
     # Remove duplicates
     df = df.drop_duplicates(subset=['GSTIN', 'Invoice_No'], keep='first')
     
@@ -106,80 +104,55 @@ def parse_tally(df):
     return df[['GSTIN', 'Invoice_No', 'Invoice_Date', 'Taxable_Value', 'Invoice_Value', 'IGST', 'CGST', 'SGST', 'TOTAL_TAX']].reset_index(drop=True)
 
 def parse_gstr2b(df):
-    """Parse and clean GSTR-2B file"""
     df = df.copy()
-    
-    # Find header row (contains GSTIN and Invoice number)
-    header_idx = 0
-    for i in range(min(len(df), 20)):
-        row_vals = [str(x).lower() for x in df.iloc[i].values]
-        if any('gstin' in str(x) for x in row_vals) and any('invoice' in str(x) for x in row_vals):
-            header_idx = i
-            break
-    
-    if header_idx > 0:
-        df.columns = df.iloc[header_idx]
-        df = df.iloc[header_idx+1:].reset_index(drop=True)
-    
-    df.columns = [str(c).strip() for c in df.columns]
     df = df.dropna(how='all')
-    
-    # Standardize column names
+
+    df.columns = [str(c).strip() for c in df.columns]
+
     column_mapping = {}
+
     for col in df.columns:
         col_lower = col.lower()
+
         if 'gstin' in col_lower:
             column_mapping[col] = 'GSTIN'
-        elif 'invoice number' in col_lower or 'invoice no' in col_lower:
+        elif 'invoice number' in col_lower:
             column_mapping[col] = 'Invoice_No'
         elif 'invoice date' in col_lower:
             column_mapping[col] = 'Invoice_Date'
         elif 'taxable value' in col_lower:
             column_mapping[col] = 'Taxable_Value'
-        elif 'invoice value' in col_lower:
-            column_mapping[col] = 'Invoice_Value'
         elif 'integrated tax' in col_lower:
             column_mapping[col] = 'IGST'
         elif 'central tax' in col_lower:
             column_mapping[col] = 'CGST'
-        elif 'state/ut tax' in col_lower or 'state tax' in col_lower:
+        elif 'state/ut tax' in col_lower:
             column_mapping[col] = 'SGST'
-    
+
     df.rename(columns=column_mapping, inplace=True)
-    
-    # Ensure required columns exist
-    if 'GSTIN' not in df.columns:
-        raise ValueError("GSTIN column not found in GSTR-2B file")
-    if 'Invoice_No' not in df.columns:
-        raise ValueError("Invoice Number column not found in GSTR-2B file")
-    if 'Invoice_Date' not in df.columns:
-        raise ValueError("Invoice Date column not found in GSTR-2B file")
-    
-    # Clean GSTIN and Invoice Number
+
+    required = ['GSTIN', 'Invoice_No', 'Invoice_Date']
+    for col in required:
+        if col not in df.columns:
+            raise ValueError(f"{col} column not found in GSTR-2B")
+
     df['GSTIN'] = df['GSTIN'].apply(clean_string)
     df['Invoice_No'] = df['Invoice_No'].apply(clean_invoice_number)
-    
-    # Parse date
     df['Invoice_Date'] = pd.to_datetime(df['Invoice_Date'], errors='coerce', dayfirst=True)
-    
-    # Parse numeric columns
-    for col in ['Taxable_Value', 'Invoice_Value', 'IGST', 'CGST', 'SGST']:
+
+    for col in ['Taxable_Value', 'IGST', 'CGST', 'SGST']:
         if col not in df.columns:
             df[col] = 0.0
-        else:
-            df[col] = df[col].apply(parse_numeric)
-    
+        df[col] = df[col].apply(parse_numeric)
+
     df['TOTAL_TAX'] = df['IGST'] + df['CGST'] + df['SGST']
-    
-    # Remove duplicates
+
     df = df.drop_duplicates(subset=['GSTIN', 'Invoice_No'], keep='first')
-    
-    # Remove rows with empty GSTIN or Invoice_No
     df = df[df['GSTIN'].str.len() > 0]
     df = df[df['Invoice_No'].str.len() > 0]
     df = df[df['Invoice_Date'].notna()]
-    
-    return df[['GSTIN', 'Invoice_No', 'Invoice_Date', 'Taxable_Value', 'Invoice_Value', 'IGST', 'CGST', 'SGST', 'TOTAL_TAX']].reset_index(drop=True)
+
+    return df[['GSTIN','Invoice_No','Invoice_Date','Taxable_Value','IGST','CGST','SGST','TOTAL_TAX']]
 
 def reconcile(gstr2b_df, tally_df):
     """Perform reconciliation between GSTR-2B and Tally"""
