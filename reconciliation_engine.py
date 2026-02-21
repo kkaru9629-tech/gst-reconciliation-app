@@ -27,8 +27,24 @@ def parse_numeric(value):
         return 0.0
 
 def parse_tally(df):
-    """Parse and clean Tally Purchase Register"""
     df = df.copy()
+
+    # Detect header row (look for row containing GSTIN and Invoice)
+    header_idx = None
+
+    for i in range(min(len(df), 20)):
+        row_values = [str(x).lower() for x in df.iloc[i].values]
+        if any("gstin" in x for x in row_values) and any("invoice" in x for x in row_values):
+            header_idx = i
+            break
+
+    if header_idx is not None:
+        df.columns = df.iloc[header_idx]
+        df = df.iloc[header_idx + 1:].reset_index(drop=True)
+    else:
+        df.columns = [str(c).strip() for c in df.columns]
+
+    df = df.dropna(how='all')
     df.columns = [str(c).strip() for c in df.columns]
     
     # Drop completely empty rows
