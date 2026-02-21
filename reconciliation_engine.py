@@ -31,9 +31,9 @@ def parse_tally(df):
 
     df = df.copy()
 
-    # Detect header row
+    # 🔍 Auto-detect header row
     header_idx = None
-    for i in range(min(len(df), 20)):
+    for i in range(min(len(df), 25)):
         row = [str(x).lower() for x in df.iloc[i].values]
         if any("gstin" in x for x in row) and any("invoice" in x for x in row):
             header_idx = i
@@ -42,6 +42,8 @@ def parse_tally(df):
     if header_idx is not None:
         df.columns = df.iloc[header_idx]
         df = df.iloc[header_idx + 1:].reset_index(drop=True)
+    else:
+        df.columns = df.columns.astype(str)
 
     df = df.dropna(how="all")
     df.columns = [str(c).strip() for c in df.columns]
@@ -51,65 +53,64 @@ def parse_tally(df):
     for col in df.columns:
         col_lower = col.lower()
 
-        if 'gstin' in col_lower or 'uin' in col_lower:
-            column_mapping[col] = 'GSTIN'
+        if "gstin" in col_lower or "uin" in col_lower:
+            column_mapping[col] = "GSTIN"
 
-        elif 'particular' in col_lower or 'party' in col_lower or 'supplier' in col_lower or 'trade' in col_lower or 'name' in col_lower:
-            column_mapping[col] = 'Trade_Name'
+        elif "supplier invoice" in col_lower or "invoice no" in col_lower:
+            column_mapping[col] = "Invoice_No"
 
-        elif 'supplier invoice' in col_lower or 'invoice no' in col_lower or 'bill no' in col_lower:
-            column_mapping[col] = 'Invoice_No'
+        elif col_lower.strip() == "date":
+            column_mapping[col] = "Invoice_Date"
 
-        elif col_lower.strip() == 'date' or 'invoice date' in col_lower:
-            column_mapping[col] = 'Invoice_Date'
+        elif "gross total" in col_lower or "total" in col_lower:
+            column_mapping[col] = "Invoice_Value"
 
-        elif 'gross total' in col_lower or 'invoice value' in col_lower or 'bill amount' in col_lower:
-            column_mapping[col] = 'Invoice_Value'
+        elif "particular" in col_lower:
+            column_mapping[col] = "Trade_Name"
 
     df.rename(columns=column_mapping, inplace=True)
 
-    required = ['GSTIN', 'Invoice_No', 'Invoice_Date']
+    required = ["GSTIN", "Invoice_No", "Invoice_Date"]
     for col in required:
         if col not in df.columns:
-            raise ValueError(f"{col} column not found in Tally file")
+            raise ValueError(f"{col} column not found in Tally")
 
-    df['GSTIN'] = df['GSTIN'].apply(clean_string)
-    df['Invoice_No'] = df['Invoice_No'].apply(clean_invoice_number)
-    df['Invoice_Date'] = pd.to_datetime(df['Invoice_Date'], errors='coerce', dayfirst=True)
+    # Clean fields
+    df["GSTIN"] = df["GSTIN"].apply(clean_string)
+    df["Invoice_No"] = df["Invoice_No"].apply(clean_invoice_number)
+    df["Invoice_Date"] = pd.to_datetime(df["Invoice_Date"], errors="coerce", dayfirst=True)
 
-    # Add Trade_Name if missing
-    if 'Trade_Name' not in df.columns:
-        df['Trade_Name'] = df['GSTIN']  # Fallback to GSTIN
+    # Detect tax columns automatically
+    igst_cols = [c for c in df.columns if "igst" in c.lower()]
+    cgst_cols = [c for c in df.columns if "cgst" in c.lower()]
+    sgst_cols = [c for c in df.columns if "sgst" in c.lower()]
 
-    # Tax columns detection
-    igst_cols = [c for c in df.columns if 'igst' in c.lower()]
-    cgst_cols = [c for c in df.columns if 'cgst' in c.lower()]
-    sgst_cols = [c for c in df.columns if 'sgst' in c.lower()]
+    df["IGST"] = df[igst_cols].sum(axis=1) if igst_cols else 0
+    df["CGST"] = df[cgst_cols].sum(axis=1) if cgst_cols else 0
+    df["SGST"] = df[sgst_cols].sum(axis=1) if sgst_cols else 0
 
-    df['IGST'] = df[igst_cols].apply(lambda r: sum(parse_numeric(x) for x in r), axis=1) if igst_cols else 0
-    df['CGST'] = df[cgst_cols].apply(lambda r: sum(parse_numeric(x) for x in r), axis=1) if cgst_cols else 0
-    df['SGST'] = df[sgst_cols].apply(lambda r: sum(parse_numeric(x) for x in r), axis=1) if sgst_cols else 0
-
-    if 'Invoice_Value' in df.columns:
-        df['Invoice_Value'] = df['Invoice_Value'].apply(parse_numeric)
+    if "Invoice_Value" in df.columns:
+        df["Invoice_Value"] = df["Invoice_Value"].apply(parse_numeric)
     else:
-        df['Invoice_Value'] = 0
+        df["Invoice_Value"] = 0
 
-    df['TOTAL_TAX'] = df['IGST'] + df['CGST'] + df['SGST']
-    df['Taxable_Value'] = df['Invoice_Value'] - df['TOTAL_TAX']
+    df["TOTAL_TAX"] = df["IGST"] + df["CGST"] + df["SGST"]
+    df["Taxable_Value"] = df["Invoice_Value"] - df["TOTAL_TAX"]
 
-    df = df.drop_duplicates(subset=['GSTIN', 'Invoice_No'])
-    df = df[df['Invoice_Date'].notna()]
+    df = df.drop_duplicates(subset=["GSTIN", "Invoice_No"])
+    df = df[df["Invoice_Date"].notna()]
 
-    # Add Month column
-    df['Month'] = df['Invoice_Date'].dt.to_period("M").astype(str)
-
-    return df[['GSTIN', 'Trade_Name', 'Invoice_No', 'Invoice_Date', 'Month', 
-               'Taxable_Value', 'Invoice_Value', 'IGST', 'CGST', 'SGST', 'TOTAL_TAX']].reset_index(drop=True)
-
-
-# -------------------- GSTR2B PARSER -------------------- #
-
+    return df[
+        [
+            "GSTIN",
+            "Trade_Name" if "Trade_Name" in df.columns else "GSTIN",
+            "Invoice_No",
+            "Invoice_Date",
+            "Taxable_Value",
+            "Invoice_Value",
+            "TOTAL_TAX",
+        ]
+    ].reset_index(drop=True)
 def parse_gstr2b(df):
 
     df = df.copy()
