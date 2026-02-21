@@ -121,10 +121,26 @@ def parse_tally(df):
 
 def parse_gstr2b(df):
     df = df.copy()
-    df = df.dropna(how='all')
 
+    # 🔍 Detect header row (look for GSTIN + Invoice words)
+    header_idx = None
+
+    for i in range(min(len(df), 20)):
+        row_vals = [str(x).lower() for x in df.iloc[i].values]
+        if any("gstin" in x for x in row_vals) and any("invoice" in x for x in row_vals):
+            header_idx = i
+            break
+
+    if header_idx is not None:
+        df.columns = df.iloc[header_idx]
+        df = df.iloc[header_idx + 1:].reset_index(drop=True)
+    else:
+        raise ValueError("Could not detect header row in GSTR-2B")
+
+    df = df.dropna(how='all')
     df.columns = [str(c).strip() for c in df.columns]
 
+    # Rename columns dynamically
     column_mapping = {}
 
     for col in df.columns:
@@ -168,8 +184,8 @@ def parse_gstr2b(df):
     df = df[df['Invoice_No'].str.len() > 0]
     df = df[df['Invoice_Date'].notna()]
 
-    return df[['GSTIN','Invoice_No','Invoice_Date','Taxable_Value','IGST','CGST','SGST','TOTAL_TAX']]
-
+    return df[['GSTIN','Invoice_No','Invoice_Date','Taxable_Value','IGST','CGST','SGST','TOTAL_TAX']].reset_index(drop=True)
+    
 def reconcile(gstr2b_df, tally_df):
     """Perform reconciliation between GSTR-2B and Tally"""
     
