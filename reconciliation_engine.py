@@ -103,73 +103,87 @@ def parse_gstr2b(df):
 
     df = df.copy()
 
+    # Auto-detect header row containing GSTIN
     header_idx = None
-    for i in range(min(len(df), 20)):
+    for i in range(min(len(df), 25)):
         row = [str(x).lower() for x in df.iloc[i].values]
-        if any("gstin" in x for x in row) and any("invoice" in x for x in row):
+        if any("gstin" in x for x in row):
             header_idx = i
             break
 
     if header_idx is None:
-        raise ValueError("Header row not detected in GSTR-2B")
+        raise ValueError("GSTR-2B header not detected")
 
+    # Rebuild dataframe from header row
     df.columns = df.iloc[header_idx]
     df = df.iloc[header_idx + 1:].reset_index(drop=True)
 
-    df = df.dropna(how='all')
     df.columns = [str(c).strip() for c in df.columns]
+    df = df.dropna(how='all')
 
+    # Rename dynamically
     column_mapping = {}
 
     for col in df.columns:
         col_lower = col.lower()
 
-        if 'gstin' in col_lower:
-            column_mapping[col] = 'GSTIN'
+        if "gstin" in col_lower:
+            column_mapping[col] = "GSTIN"
 
-        elif 'invoice date' in col_lower:
-            column_mapping[col] = 'Invoice_Date'
+        elif "invoice number" in col_lower:
+            column_mapping[col] = "Invoice_No"
 
-        elif 'invoice' in col_lower and 'date' not in col_lower:
-            column_mapping[col] = 'Invoice_No'
+        elif "invoice date" in col_lower:
+            column_mapping[col] = "Invoice_Date"
 
-        elif 'taxable' in col_lower:
-            column_mapping[col] = 'Taxable_Value'
+        elif "taxable value" in col_lower:
+            column_mapping[col] = "Taxable_Value"
 
-        elif 'integrated' in col_lower:
-            column_mapping[col] = 'IGST'
+        elif "integrated tax" in col_lower:
+            column_mapping[col] = "IGST"
 
-        elif 'central' in col_lower:
-            column_mapping[col] = 'CGST'
+        elif "central tax" in col_lower:
+            column_mapping[col] = "CGST"
 
-        elif 'state' in col_lower:
-            column_mapping[col] = 'SGST'
+        elif "state" in col_lower:
+            column_mapping[col] = "SGST"
 
     df.rename(columns=column_mapping, inplace=True)
 
-    required = ['GSTIN', 'Invoice_No', 'Invoice_Date']
+    # Validate required
+    required = ["GSTIN", "Invoice_No", "Invoice_Date"]
     for col in required:
         if col not in df.columns:
             raise ValueError(f"{col} column not found in GSTR-2B")
 
-    df['GSTIN'] = df['GSTIN'].apply(clean_string)
-    df['Invoice_No'] = df['Invoice_No'].apply(clean_invoice_number)
-    df['Invoice_Date'] = pd.to_datetime(df['Invoice_Date'], errors='coerce', dayfirst=True)
+    # Clean
+    df["GSTIN"] = df["GSTIN"].apply(clean_string)
+    df["Invoice_No"] = df["Invoice_No"].apply(clean_invoice_number)
+    df["Invoice_Date"] = pd.to_datetime(df["Invoice_Date"], errors="coerce", dayfirst=True)
 
-    for col in ['Taxable_Value','IGST','CGST','SGST']:
+    for col in ["Taxable_Value", "IGST", "CGST", "SGST"]:
         if col in df.columns:
             df[col] = df[col].apply(parse_numeric)
         else:
-            df[col] = 0
+            df[col] = 0.0
 
-    df['TOTAL_TAX'] = df['IGST'] + df['CGST'] + df['SGST']
-    df['Invoice_Value'] = df['Taxable_Value'] + df['TOTAL_TAX']
+    df["TOTAL_TAX"] = df["IGST"] + df["CGST"] + df["SGST"]
+    df["Invoice_Value"] = df["Taxable_Value"] + df["TOTAL_TAX"]
 
-    df = df.drop_duplicates(subset=['GSTIN','Invoice_No'])
-    df = df[df['Invoice_Date'].notna()]
+    df = df.drop_duplicates(subset=["GSTIN", "Invoice_No"])
+    df = df[df["Invoice_Date"].notna()]
 
-    return df[['GSTIN','Invoice_No','Invoice_Date','Taxable_Value','Invoice_Value','IGST','CGST','SGST','TOTAL_TAX']].reset_index(drop=True)
-
+    return df[[
+        "GSTIN",
+        "Invoice_No",
+        "Invoice_Date",
+        "Taxable_Value",
+        "Invoice_Value",
+        "IGST",
+        "CGST",
+        "SGST",
+        "TOTAL_TAX"
+    ]].reset_index(drop=True)
 
 # -------------------- RECONCILIATION -------------------- #
 
