@@ -263,40 +263,29 @@ if "results" in st.session_state:
         })
 
         def write_sheet(df, sheet_name):
-            if df.empty:
-                # Create empty sheet with message
-                empty_df = pd.DataFrame({"Message": ["No data available"]})
-                empty_df.to_excel(writer, sheet_name=sheet_name, index=False)
-                worksheet = writer.sheets[sheet_name]
-                worksheet.set_column(0, 0, 30, data_format)
-                return
-            
-            df.to_excel(writer, sheet_name=sheet_name, index=False, startrow=1)
-            worksheet = writer.sheets[sheet_name]
 
-            # Write headers with format
-            for col_num, value in enumerate(df.columns):
-                worksheet.write(0, col_num, value, header_format)
+    if df.empty:
+        empty_df = pd.DataFrame({"Message": ["No data available"]})
+        empty_df.to_excel(writer, sheet_name=sheet_name, index=False)
+        return
 
-            # Auto-fit columns and apply formats
-            for i, col in enumerate(df.columns):
-                # Calculate max width
-                max_length = max(
-                    df[col].astype(str).map(len).max() if not df.empty else 0,
-                    len(str(col))
-                ) + 2
-                
-                # Cap at 50 characters
-                max_length = min(max_length, 50)
-                
-                # Determine column format
-                if df[col].dtype in ['float64', 'int64'] and 'tax' in col.lower() or 'value' in col.lower():
-                    worksheet.set_column(i, i, max_length, money_format)
-                elif 'date' in col.lower():
-                    worksheet.set_column(i, i, max_length, date_format)
-                else:
-                    worksheet.set_column(i, i, max_length, data_format)
+    df.to_excel(writer, sheet_name=sheet_name, index=False, header=False, startrow=1)
+    worksheet = writer.sheets[sheet_name]
 
+    # Write formatted header
+    for col_num, column in enumerate(df.columns):
+        worksheet.write(0, col_num, column, header_format)
+
+    # Auto-fit columns
+    for i, col in enumerate(df.columns):
+        max_len = max(
+            df[col].astype(str).map(len).max(),
+            len(col)
+        ) + 2
+
+        max_len = min(max_len, 50)
+
+        worksheet.set_column(i, i, max_len, data_format)
         # Write all sheets
         summary_df = pd.DataFrame([results["summary"]]).T.reset_index()
         summary_df.columns = ["Metric", "Value"]
