@@ -148,7 +148,7 @@ def parse_gstr2b(df):
 
         if 'gstin' in col_lower:
             column_mapping[col] = 'GSTIN'
-        elif 'invoice number' in col_lower:
+        elif 'invoice' in col_lower and 'date' not in col_lower:
             column_mapping[col] = 'Invoice_No'
         elif 'invoice date' in col_lower:
             column_mapping[col] = 'Invoice_Date'
