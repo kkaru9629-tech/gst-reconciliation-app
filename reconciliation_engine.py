@@ -1,9 +1,7 @@
 import pandas as pd
 import re
 
-# ---------------------------------------
-# COMMON CLEANERS
-# ---------------------------------------
+# ---------------- COMMON CLEANERS ---------------- #
 
 def clean_string(val):
     if pd.isna(val):
@@ -15,17 +13,16 @@ def clean_invoice(inv):
         return ""
     return re.sub(r"[^A-Z0-9/.-]", "", str(inv).upper())
 
-# ---------------------------------------
-# TALLY PARSER
-# ---------------------------------------
+
+# ---------------- TALLY PARSER ---------------- #
 
 def parse_tally(df):
 
     df = df.copy()
 
-    # Detect header row
+    # Safe header detection
     header_idx = None
-    for i in range(30):
+    for i in range(min(len(df), 30)):
         row = " ".join(df.iloc[i].astype(str).str.lower().values)
         if "supplier invoice no" in row and "gstin" in row:
             header_idx = i
@@ -55,7 +52,7 @@ def parse_tally(df):
     df["Invoice_No"] = df["Invoice_No"].apply(clean_invoice)
     df["Invoice_Date"] = pd.to_datetime(df["Invoice_Date"], errors="coerce", dayfirst=True)
 
-    # Tax columns
+    # Detect tax columns safely
     cgst_cols = [c for c in df.columns if "input_cgst" in str(c).lower()]
     sgst_cols = [c for c in df.columns if "input_sgst" in str(c).lower()]
     igst_cols = [c for c in df.columns if "input igst" in str(c).lower()]
@@ -87,18 +84,16 @@ def parse_tally(df):
         "TOTAL_TAX"
     ]]
 
-# ---------------------------------------
-# GSTR-2B PARSER (PERMANENT STRUCTURE)
-# ---------------------------------------
+
+# ---------------- GSTR-2B PARSER ---------------- #
 
 def parse_gstr2b(df):
 
     df = df.copy()
     df = df.dropna(how="all")
 
-    # Detect header using Invoice number column
     header_idx = None
-    for i in range(20):
+    for i in range(min(len(df), 20)):
         row = " ".join(df.iloc[i].astype(str).str.lower().values)
         if "invoice number" in row and "gstin" in row:
             header_idx = i
@@ -118,7 +113,7 @@ def parse_gstr2b(df):
         "Taxable Value (₹)": "Taxable_Value",
         "Integrated Tax(₹)": "IGST",
         "Central Tax(₹)": "CGST",
-        "State/UT Tax(₹)": "SGST",
+        "State/UT Tax(₹)": "SGST"
     }, inplace=True)
 
     required = ["GSTIN", "Invoice_No", "Invoice_Date"]
@@ -154,9 +149,8 @@ def parse_gstr2b(df):
         "TOTAL_TAX"
     ]]
 
-# ---------------------------------------
-# RECONCILIATION
-# ---------------------------------------
+
+# ---------------- RECONCILIATION ---------------- #
 
 def reconcile(gstr2b_df, tally_df):
 
