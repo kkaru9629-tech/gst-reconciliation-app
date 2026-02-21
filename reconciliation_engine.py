@@ -109,17 +109,18 @@ def parse_gstr2b(df):
 
     df = df.copy()
 
-    # -------- FIND HEADER ROW -------- #
+    # -------- STRONG HEADER DETECTION -------- #
     header_idx = None
 
-    for i in range(10):
-        first_cell = str(df.iloc[i, 0]).strip()
-        if first_cell == "GSTIN of supplier":
+    for i in range(min(len(df), 20)):
+        row_text = " ".join(df.iloc[i].astype(str).str.lower().values)
+
+        if "gstin" in row_text and "invoice number" in row_text:
             header_idx = i
             break
 
     if header_idx is None:
-        raise ValueError("Proper GST Portal GSTR-2B file not detected.")
+        raise ValueError("GSTR-2B header not detected. Make sure original GST portal file is uploaded.")
 
     # Set header
     df.columns = df.iloc[header_idx]
@@ -128,7 +129,7 @@ def parse_gstr2b(df):
     df = df.dropna(how="all")
     df.columns = [str(c).strip() for c in df.columns]
 
-    # -------- RENAME EXACT COLUMNS -------- #
+    # -------- COLUMN RENAME -------- #
     rename_map = {
         "GSTIN of supplier": "GSTIN",
         "Trade/Legal name": "Trade_Name",
@@ -142,11 +143,10 @@ def parse_gstr2b(df):
 
     df.rename(columns=rename_map, inplace=True)
 
-    # -------- REQUIRED CHECK -------- #
-    required = ["GSTIN", "Invoice_No", "Invoice_Date"]
-    for col in required:
+    # -------- CHECK REQUIRED -------- #
+    for col in ["GSTIN", "Invoice_No", "Invoice_Date"]:
         if col not in df.columns:
-            raise ValueError(f"{col} column missing in GSTR-2B.")
+            raise ValueError(f"{col} column missing in GSTR-2B")
 
     # -------- CLEAN DATA -------- #
     df["GSTIN"] = df["GSTIN"].astype(str).str.strip().str.upper()
@@ -161,7 +161,6 @@ def parse_gstr2b(df):
 
     df["TOTAL_TAX"] = df["IGST"] + df["CGST"] + df["SGST"]
     df["Invoice_Value"] = df["Taxable_Value"] + df["TOTAL_TAX"]
-
     df["Month"] = df["Invoice_Date"].dt.to_period("M").astype(str)
 
     df = df.drop_duplicates(subset=["GSTIN", "Invoice_No"])
@@ -179,7 +178,7 @@ def parse_gstr2b(df):
         "CGST",
         "SGST",
         "TOTAL_TAX"
-    ]].reset_index(drop=True)
+    ]]
 def reconcile(gstr2b_df, tally_df):
 
     gstr2b_df["Match_Key"] = gstr2b_df["GSTIN"] + "|" + gstr2b_df["Invoice_No"]
