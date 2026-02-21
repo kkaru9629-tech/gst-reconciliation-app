@@ -143,23 +143,32 @@ def parse_gstr2b(df):
     # Rename columns dynamically
     column_mapping = {}
 
-    for col in df.columns:
-        col_lower = col.lower()
+for col in df.columns:
+    col_clean = str(col).strip().lower()
 
-        if 'gstin' in col_lower:
-            column_mapping[col] = 'GSTIN'
-        elif 'invoice' in col_lower and 'date' not in col_lower:
-            column_mapping[col] = 'Invoice_No'
-        elif 'invoice date' in col_lower:
-            column_mapping[col] = 'Invoice_Date'
-        elif 'taxable value' in col_lower:
-            column_mapping[col] = 'Taxable_Value'
-        elif 'integrated tax' in col_lower:
-            column_mapping[col] = 'IGST'
-        elif 'central tax' in col_lower:
-            column_mapping[col] = 'CGST'
-        elif 'state/ut tax' in col_lower:
-            column_mapping[col] = 'SGST'
+    if 'gstin' in col_clean:
+        column_mapping[col] = 'GSTIN'
+
+    elif 'invoice date' in col_clean:
+        column_mapping[col] = 'Invoice_Date'
+
+    elif 'date' in col_clean and 'invoice' in col_clean:
+        column_mapping[col] = 'Invoice_Date'
+
+    elif 'invoice' in col_clean and 'date' not in col_clean:
+        column_mapping[col] = 'Invoice_No'
+
+    elif 'taxable' in col_clean:
+        column_mapping[col] = 'Taxable_Value'
+
+    elif 'integrated' in col_clean:
+        column_mapping[col] = 'IGST'
+
+    elif 'central' in col_clean:
+        column_mapping[col] = 'CGST'
+
+    elif 'state' in col_clean:
+        column_mapping[col] = 'SGST'
 
     df.rename(columns=column_mapping, inplace=True)
 
