@@ -20,7 +20,7 @@ def parse_tally(df):
 
     df = df.copy()
 
-    # Safe header detection
+    # Detect header safely (Tally format)
     header_idx = None
     for i in range(min(len(df), 30)):
         row = " ".join(df.iloc[i].astype(str).str.lower().values)
@@ -52,7 +52,7 @@ def parse_tally(df):
     df["Invoice_No"] = df["Invoice_No"].apply(clean_invoice)
     df["Invoice_Date"] = pd.to_datetime(df["Invoice_Date"], errors="coerce", dayfirst=True)
 
-    # Detect tax columns safely
+    # Detect tax columns
     cgst_cols = [c for c in df.columns if "input_cgst" in str(c).lower()]
     sgst_cols = [c for c in df.columns if "input_sgst" in str(c).lower()]
     igst_cols = [c for c in df.columns if "input igst" in str(c).lower()]
@@ -65,8 +65,6 @@ def parse_tally(df):
     df["TOTAL_TAX"] = df["CGST"] + df["SGST"] + df["IGST"]
     df["Taxable_Value"] = df["Invoice_Value"] - df["TOTAL_TAX"]
 
-    df["Month"] = df["Invoice_Date"].dt.to_period("M").astype(str)
-
     df = df.drop_duplicates(subset=["GSTIN", "Invoice_No"])
     df = df[df["Invoice_Date"].notna()]
 
@@ -75,7 +73,6 @@ def parse_tally(df):
         "Trade_Name",
         "Invoice_No",
         "Invoice_Date",
-        "Month",
         "Taxable_Value",
         "Invoice_Value",
         "IGST",
@@ -85,26 +82,14 @@ def parse_tally(df):
     ]]
 
 
-# ---------------- GSTR-2B PARSER ---------------- #
+# ---------------- GSTR-2B PARSER (FIXED FORMAT) ---------------- #
 
 def parse_gstr2b(df):
 
     df = df.copy()
     df = df.dropna(how="all")
 
-    header_idx = None
-    for i in range(min(len(df), 20)):
-        row = " ".join(df.iloc[i].astype(str).str.lower().values)
-        if "invoice number" in row and "gstin" in row:
-            header_idx = i
-            break
-
-    if header_idx is None:
-        raise ValueError("GSTR-2B header not detected.")
-
-    df.columns = df.iloc[header_idx]
-    df = df.iloc[header_idx + 1:].reset_index(drop=True)
-
+    # Header assumed in first row (as confirmed)
     df.rename(columns={
         "GSTIN of supplier": "GSTIN",
         "Trade/Legal name": "Trade_Name",
@@ -119,18 +104,22 @@ def parse_gstr2b(df):
     required = ["GSTIN", "Invoice_No", "Invoice_Date"]
     for col in required:
         if col not in df.columns:
-            raise ValueError(f"{col} missing in GSTR-2B file.")
+            raise ValueError(
+                "GSTR-2B format incorrect. Please use the confirmed structured format."
+            )
 
     df["GSTIN"] = df["GSTIN"].apply(clean_string)
     df["Invoice_No"] = df["Invoice_No"].apply(clean_invoice)
     df["Invoice_Date"] = pd.to_datetime(df["Invoice_Date"], errors="coerce", dayfirst=True)
 
     for col in ["Taxable_Value", "IGST", "CGST", "SGST"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        else:
+            df[col] = 0
 
     df["TOTAL_TAX"] = df["IGST"] + df["CGST"] + df["SGST"]
     df["Invoice_Value"] = df["Taxable_Value"] + df["TOTAL_TAX"]
-    df["Month"] = df["Invoice_Date"].dt.to_period("M").astype(str)
 
     df = df.drop_duplicates(subset=["GSTIN", "Invoice_No"])
     df = df[df["Invoice_Date"].notna()]
@@ -140,7 +129,6 @@ def parse_gstr2b(df):
         "Trade_Name",
         "Invoice_No",
         "Invoice_Date",
-        "Month",
         "Taxable_Value",
         "Invoice_Value",
         "IGST",
